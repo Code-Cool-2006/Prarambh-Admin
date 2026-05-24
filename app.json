@@ -38,6 +38,14 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Camera access is required to scan user QR codes.",
+          "barcodeScannerEnabled": true
+        }
       ]
     ],
     "experiments": {
