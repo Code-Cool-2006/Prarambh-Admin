@@ -71,9 +71,9 @@ async function verify() {
 
   // 3. Scan Check In
   console.log('\n3. Testing Attendee Check-In Scan...');
-  // QR code for attendee RISHAB.CHAVADAR
+  // QR code scan by USN
   const scanInRes = await request('POST', '/scan', {
-    qrData: 'PRB-2GI24CS119',
+    qrData: '2GI24CS119',
     scanType: 'IN',
     scannedBy: 'System Admin',
     location: 'Main Entrance'
@@ -87,7 +87,7 @@ async function verify() {
   // 4. Scan Check Out
   console.log('\n4. Testing Attendee Check-Out Scan...');
   const scanOutRes = await request('POST', '/scan', {
-    qrData: 'PRB-2GI24CS119',
+    qrData: '2GI24CS119',
     scanType: 'OUT',
     scannedBy: 'System Admin',
     location: 'Main Entrance'

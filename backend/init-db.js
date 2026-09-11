@@ -1,7 +1,6 @@
 require('dotenv').config();
 const { Client } = require('pg');
 const bcrypt = require('bcrypt');
-const crypto = require('crypto');
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -46,25 +45,6 @@ async function initDB() {
   `);
   console.log('attendance table and indexes verified.');
 
-  // 3. Populate attendance_code for any registrations where attendance_code IS NULL
-  const missingCodesRes = await client.query(`
-    SELECT id, usn, name FROM registrations WHERE attendance_code IS NULL OR attendance_code = '';
-  `);
-
-  if (missingCodesRes.rows.length > 0) {
-    console.log(`Generating attendance codes for ${missingCodesRes.rows.length} registrations...`);
-    for (const reg of missingCodesRes.rows) {
-      // Clean USN or generate a 6-character random alphanumeric suffix
-      const suffix = reg.usn ? reg.usn.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : crypto.randomBytes(3).toString('hex').toUpperCase();
-      const code = `PRB-${suffix}`;
-      await client.query(`
-        UPDATE registrations SET attendance_code = $1 WHERE id = $2;
-      `, [code, reg.id]);
-      console.log(`Assigned code ${code} to ${reg.name}`);
-    }
-  } else {
-    console.log('All registrations already have attendance codes.');
-  }
 
   // 4. Seed default admin user (admin / admin123)
   const existingAdmin = await client.query(`
