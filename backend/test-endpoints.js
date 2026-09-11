@@ -47,8 +47,16 @@ function request(method, path, body, headers = {}) {
 async function verify() {
   console.log('=== STARTING BACKEND INTEGRATION VERIFICATION ===\n');
 
-  // 1. Admin Login
-  console.log('1. Testing Admin Login...');
+  // 1. Health check
+  console.log('1. Testing Health Endpoint...');
+  const healthRes = await request('GET', '/health');
+  if (healthRes.status !== 200) {
+    throw new Error(`Health check failed: ${JSON.stringify(healthRes.body)}`);
+  }
+  console.log('✅ Health check passed!');
+
+  // 2. Admin Login
+  console.log('\n2. Testing Admin Login...');
   const loginRes = await request('POST', '/auth/login', {
     username: 'admin',
     password: 'admin123'
@@ -61,11 +69,11 @@ async function verify() {
   const token = loginRes.body.token;
   const authHeaders = { 'Authorization': `Bearer ${token}` };
 
-  // 2. Scan Check In
-  console.log('\n2. Testing Attendee Check-In Scan...');
-  // QR token for Aarav Sharma
+  // 3. Scan Check In
+  console.log('\n3. Testing Attendee Check-In Scan...');
+  // QR code for attendee RISHAB.CHAVADAR
   const scanInRes = await request('POST', '/scan', {
-    qrData: '11111111-1111-1111-1111-111111111111',
+    qrData: 'PRB-2GI24CS119',
     scanType: 'IN',
     scannedBy: 'System Admin',
     location: 'Main Entrance'
@@ -76,10 +84,10 @@ async function verify() {
   }
   console.log(`✅ Scan IN succeeded: ${scanInRes.body.message}`);
 
-  // 3. Scan Check Out
-  console.log('\n3. Testing Attendee Check-Out Scan...');
+  // 4. Scan Check Out
+  console.log('\n4. Testing Attendee Check-Out Scan...');
   const scanOutRes = await request('POST', '/scan', {
-    qrData: '11111111-1111-1111-1111-111111111111',
+    qrData: 'PRB-2GI24CS119',
     scanType: 'OUT',
     scannedBy: 'System Admin',
     location: 'Main Entrance'
@@ -90,8 +98,8 @@ async function verify() {
   }
   console.log(`✅ Scan OUT succeeded: ${scanOutRes.body.message}`);
 
-  // 4. Fetch Attendance Report
-  console.log('\n4. Fetching Today\'s Attendance Report...');
+  // 5. Fetch Attendance Report
+  console.log('\n5. Fetching Today\'s Attendance Report...');
   const reportRes = await request('GET', '/attendance/report/today', null, authHeaders);
 
   if (reportRes.status !== 200) {
@@ -103,6 +111,7 @@ async function verify() {
 
   console.log('\n=== ALL ENDPOINT VERIFICATIONS PASSED SUCCESSFULLY ===');
 }
+
 
 verify().catch((err) => {
   console.error('\n❌ Verification Failed:', err.message);

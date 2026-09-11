@@ -41,6 +41,11 @@ const authenticateAdmin = (req, res, next) => {
   }
 };
 
+// Health Check Endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // 1. POST /auth/login - Admin Login
 app.post('/auth/login', async (req, res) => {
   const { username, password } = req.body;
@@ -51,8 +56,8 @@ app.post('/auth/login', async (req, res) => {
 
   try {
     const { rows } = await pool.query(
-      'SELECT * FROM users WHERE website_user = $1',
-      [username]
+      'SELECT * FROM admin_users WHERE LOWER(username) = LOWER($1)',
+      [username.trim()]
     );
 
     if (rows.length === 0) {
@@ -62,7 +67,7 @@ app.post('/auth/login', async (req, res) => {
     const user = rows[0];
 
     // Check password
-    const isPasswordValid = await bcrypt.compare(password, user.website_pass);
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
     if (!isPasswordValid) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
@@ -103,36 +108,46 @@ app.post('/scan', authenticateAdmin, async (req, res) => {
   }
 
   try {
-    // Determine query strategy: search by UUID qr_token, or by numeric ID
-    let userQuery = 'SELECT * FROM users WHERE qr_token::text = $1';
-    let queryParam = qrData;
+    const trimmed = String(qrData).trim();
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed);
 
-    // Check if it's a valid integer ID
-    if (!isNaN(Number(qrData)) && Number.isInteger(Number(qrData))) {
-      userQuery = 'SELECT * FROM users WHERE id = $1';
-      queryParam = Number(qrData);
+    let regRes;
+    if (isUUID) {
+      regRes = await pool.query(
+        `SELECT * FROM registrations WHERE id = $1 OR LOWER(attendance_code) = LOWER($2)`,
+        [trimmed, trimmed]
+      );
+    } else {
+      regRes = await pool.query(
+        `SELECT * FROM registrations 
+         WHERE LOWER(attendance_code) = LOWER($1) 
+            OR LOWER(usn) = LOWER($1) 
+            OR LOWER(email) = LOWER($1)`,
+        [trimmed]
+      );
     }
 
-    const userRes = await pool.query(userQuery, [queryParam]);
-
-    if (userRes.rows.length === 0) {
+    if (regRes.rows.length === 0) {
       return res.status(404).json({ error: 'Attendee not found' });
     }
 
-    const user = userRes.rows[0];
+    const reg = regRes.rows[0];
 
     // Insert record into the attendance table
     await pool.query(
-      `INSERT INTO attendance (user_id, scan_type, scanned_by, location, scanned_at)
+      `INSERT INTO attendance (registration_id, scan_type, scanned_by, location, scanned_at)
        VALUES ($1, $2, $3, $4, NOW())`,
-      [user.id, scanType, scannedBy || req.user.name, location || 'Main Entrance']
+      [reg.id, scanType, scannedBy || req.user.name, location || 'Main Entrance']
     );
 
     res.json({
-      message: `Checked ${scanType} user ${user.name} successfully!`,
+      message: `Checked ${scanType} user ${reg.name} successfully!`,
       user: {
-        id: user.id,
-        name: user.name,
+        id: reg.id,
+        name: reg.name,
+        usn: reg.usn,
+        college: reg.college,
+        attendance_code: reg.attendance_code,
       },
     });
   } catch (err) {
@@ -144,19 +159,21 @@ app.post('/scan', authenticateAdmin, async (req, res) => {
 // 3. GET /attendance/report/today - Daily Attendance Summary & Logs
 app.get('/attendance/report/today', authenticateAdmin, async (req, res) => {
   try {
-    // SQL query returns stats for users: total check-ins, last IN, last OUT for today
+    // SQL query returns stats for registered attendees: total check-ins, last IN, last OUT for today
     const query = `
       SELECT 
-        u.id, 
-        u.name,
+        r.id, 
+        r.name,
+        r.usn,
+        r.college,
+        r.attendance_code,
         COALESCE(COUNT(CASE WHEN a.scan_type = 'IN' THEN 1 END), 0)::int AS check_ins,
         MAX(CASE WHEN a.scan_type = 'IN' THEN a.scanned_at END) AS last_in,
         MAX(CASE WHEN a.scan_type = 'OUT' THEN a.scanned_at END) AS last_out
-      FROM users u
-      LEFT JOIN attendance a ON u.id = a.user_id AND a.scanned_at >= CURRENT_DATE
-      WHERE u.role = 'user'
-      GROUP BY u.id, u.name
-      ORDER BY name ASC;
+      FROM registrations r
+      LEFT JOIN attendance a ON r.id = a.registration_id AND a.scanned_at >= CURRENT_DATE
+      GROUP BY r.id, r.name, r.usn, r.college, r.attendance_code
+      ORDER BY r.name ASC;
     `;
 
     const { rows } = await pool.query(query);
@@ -171,3 +188,4 @@ app.get('/attendance/report/today', authenticateAdmin, async (req, res) => {
 app.listen(port, () => {
   console.log(`Backend server is running on http://localhost:${port}`);
 });
+
