@@ -27,6 +27,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { SparkTheme } from '@/constants/theme';
 import { CyberCard } from '@/components/CyberCard';
+import { BackendConnectionBadge } from '@/components/BackendConnectionBadge';
 
 const FINDER_SIZE = 260;
 const CORNER_SIZE = 26;
@@ -251,8 +252,11 @@ export default function ScannerScreen() {
             </Text>
           </View>
           <View style={{ marginLeft: 10 }}>
-            <View style={s.badgePill}>
-              <Text style={s.badgePillText}>SPARK GATE ADMIN</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={s.badgePill}>
+                <Text style={s.badgePillText}>SPARK GATE ADMIN</Text>
+              </View>
+              <BackendConnectionBadge variant="compact" />
             </View>
             <Text style={s.adminName}>{admin?.name || 'Admin'}</Text>
           </View>

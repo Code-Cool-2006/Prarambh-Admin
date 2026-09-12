@@ -5,7 +5,8 @@ import * as SecureStore from 'expo-secure-store';
 // Set to false to connect to your live Express + database backend.
 const USE_MOCK = false;
 
-const baseURL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.20:3000';
+export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.20:3000';
+const baseURL = API_BASE_URL;
 
 // eslint-disable-next-line import/no-named-as-default-member
 const client = axios.create({
@@ -148,5 +149,30 @@ client.interceptors.request.use(
     return Promise.reject(error);
   }
 );
+
+export interface HealthStatus {
+  status: 'connected' | 'waking' | 'offline';
+  latencyMs?: number;
+  message?: string;
+  checkedAt: Date;
+}
+
+export async function checkBackendHealth(timeoutMs = 6000): Promise<HealthStatus> {
+  const start = Date.now();
+  try {
+    const res = await axios.get(`${baseURL}/health`, { timeout: timeoutMs });
+    const latencyMs = Date.now() - start;
+    if (res.status === 200 && res.data?.status === 'ok') {
+      return { status: 'connected', latencyMs, checkedAt: new Date() };
+    }
+    return { status: 'offline', message: `Server responded with ${res.status}`, checkedAt: new Date() };
+  } catch (err: any) {
+    const duration = Date.now() - start;
+    if (err.code === 'ECONNABORTED' || duration >= timeoutMs - 500) {
+      return { status: 'waking', message: 'Server is waking up (cold start)...', checkedAt: new Date() };
+    }
+    return { status: 'offline', message: err.message || 'Cannot reach server', checkedAt: new Date() };
+  }
+}
 
 export default client;

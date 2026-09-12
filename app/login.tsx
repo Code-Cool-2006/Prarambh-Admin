@@ -22,6 +22,7 @@ import { router } from 'expo-router';
 import { SparkTheme } from '@/constants/theme';
 import { CyberCard } from '@/components/CyberCard';
 import { CosmicBackground } from '@/components/CosmicBackground';
+import { BackendConnectionBadge } from '@/components/BackendConnectionBadge';
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
@@ -130,6 +131,9 @@ export default function LoginScreen() {
             <Text style={s.title}>Illuminate &apos;26</Text>
             <Text style={s.subTitle}>Admin Gate Pass & Attendance Portal</Text>
           </View>
+
+          {/* Real-time Backend Connection Indicator */}
+          <BackendConnectionBadge variant="banner" />
 
           {/* CyberCard Form */}
           <CyberCard style={s.cardWrapper} innerStyle={s.cardInner}>
