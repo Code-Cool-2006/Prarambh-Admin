@@ -5,7 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 // Set to false to connect to your live Express + database backend.
 const USE_MOCK = false;
 
-const baseURL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.43:3000';
+const baseURL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.20:3000';
 
 // eslint-disable-next-line import/no-named-as-default-member
 const client = axios.create({

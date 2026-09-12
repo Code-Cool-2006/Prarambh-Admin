@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -15,6 +16,9 @@ app.use(express.json());
 // Initialize Database Pool
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false,
+  },
 });
 
 pool.on('error', (err) => {
@@ -185,7 +189,16 @@ app.get('/attendance/report/today', authenticateAdmin, async (req, res) => {
 });
 
 // Start Server
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`Backend server is running on http://localhost:${port}`);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ Error: Port ${port} is already in use! The server is likely already running in another terminal.`);
+    process.exit(1);
+  } else {
+    console.error('Server error:', err);
+  }
 });
 

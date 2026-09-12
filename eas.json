@@ -1,0 +1,36 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "ANDROID_HOME": "/home/rishab/Android/Sdk",
+        "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk",
+        "ANDROID_NDK_HOME": "/home/rishab/Android/Sdk/ndk/27.1.12297006"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "ANDROID_HOME": "/home/rishab/Android/Sdk",
+        "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk",
+        "ANDROID_NDK_HOME": "/home/rishab/Android/Sdk/ndk/27.1.12297006"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
