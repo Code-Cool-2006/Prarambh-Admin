@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: prarambh-admin-backend
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        value: prarambh_jwt_secret_key_54321
+      - key: PORT
+        value: 10000

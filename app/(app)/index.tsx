@@ -5,15 +5,19 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  Platform,
+  Modal,
+  TextInput,
+  Alert,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/src/context/AuthContext';
 import client from '@/src/api/client';
 import { router, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -21,28 +25,51 @@ import Animated, {
   withTiming,
   withSequence,
 } from 'react-native-reanimated';
+import { SparkTheme } from '@/constants/theme';
+import { CyberCard } from '@/components/CyberCard';
+import { BackendConnectionBadge } from '@/components/BackendConnectionBadge';
 
 const FINDER_SIZE = 260;
-const CORNER_SIZE = 24;
+const CORNER_SIZE = 26;
+
+interface ScanResultData {
+  ok: boolean;
+  message: string;
+  attendee?: {
+    name?: string;
+    usn?: string;
+    college?: string;
+    attendance_code?: string;
+  };
+}
 
 export default function ScannerScreen() {
+  const insets = useSafeAreaInsets();
   const { admin, logout } = useAuth();
   const [permission, requestPermission] = useCameraPermissions();
   const scanType = 'IN';
-  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const [result, setResult] = useState<ScanResultData | null>(null);
   const [todayCount, setTodayCount] = useState(0);
   const [isScanning, setIsScanning] = useState(true);
+  const [torchOn, setTorchOn] = useState(false);
+  const [facing, setFacing] = useState<'back' | 'front'>('back');
+  
+  // Manual Entry Modal
+  const [manualModalVisible, setManualModalVisible] = useState(false);
+  const [manualInput, setManualInput] = useState('');
+  const [manualLoading, setManualLoading] = useState(false);
+
   const cooldown = useRef(false);
 
   // Animated laser line y-position
   const laserY = useSharedValue(0);
 
-  // Run laser animation on mount
   React.useEffect(() => {
     laserY.value = withRepeat(
       withSequence(
-        withTiming(FINDER_SIZE - 4, { duration: 2200 }),
-        withTiming(0, { duration: 2200 })
+        withTiming(FINDER_SIZE - 6, { duration: 2000 }),
+        withTiming(0, { duration: 2000 })
       ),
       -1,
       true
@@ -56,7 +83,6 @@ export default function ScannerScreen() {
   const fetchTodayCount = async () => {
     try {
       const res = await client.get('/attendance/report/today');
-      // Count unique people who checked in today
       const present = res.data.filter((r: any) => r.check_ins > 0).length;
       setTodayCount(present);
     } catch (err) {
@@ -64,7 +90,6 @@ export default function ScannerScreen() {
     }
   };
 
-  // Re-fetch count when the screen is focused
   useFocusEffect(
     useCallback(() => {
       fetchTodayCount();
@@ -72,45 +97,67 @@ export default function ScannerScreen() {
     }, [])
   );
 
+  const processScanData = async (data: string) => {
+    try {
+      const res = await client.post('/scan', {
+        qrData: data.trim(),
+        scanType,
+        scannedBy: admin?.name || 'Admin',
+        location: 'Main Gate',
+      });
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setResult({
+        ok: true,
+        message: res.data.message || `Check-in logged successfully!`,
+        attendee: res.data.attendee || undefined,
+      });
+      fetchTodayCount();
+    } catch (err: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      const msg = err.response?.data?.error || 'Scan failed. Code not recognized.';
+      setResult({ ok: false, message: msg });
+    }
+  };
+
   const handleScan = async ({ data }: { data: string }) => {
     if (cooldown.current || !isScanning) return;
     cooldown.current = true;
-    
-    // Play quick haptic tap on detection
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    await processScanData(data);
+
+    // 3.5-second cooldown to display the verified pass card
+    setTimeout(() => {
+      cooldown.current = false;
+      setResult(null);
+    }, 3500);
+  };
+
+  const handleManualSubmit = async () => {
+    if (!manualInput.trim()) {
+      return Alert.alert('Input Required', 'Please enter a USN, Attendance Code, or Email.');
+    }
+
+    setManualLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
-      const res = await client.post('/scan', {
-        qrData: data,
-        scanType,
-        scannedBy: admin?.name || 'Admin',
-        location: 'Main Entrance',
-      });
-
-      // Play success haptic
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setResult({ ok: true, message: res.data.message || `Logged ${scanType} successfully!` });
-      
-      // Refresh count
-      fetchTodayCount();
-    } catch (err: any) {
-      // Play error haptic
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      const msg = err.response?.data?.error || 'Scan failed. Please try again.';
-      setResult({ ok: false, message: msg });
+      await processScanData(manualInput.trim());
+      setManualModalVisible(false);
+      setManualInput('');
     } finally {
-      // Cooldown for 3 seconds to show banner and prevent multiple scans of same code
+      setManualLoading(false);
       setTimeout(() => {
-        cooldown.current = false;
         setResult(null);
-      }, 3000);
+      }, 3500);
     }
   };
 
   if (!permission) {
     return (
       <View style={[s.container, s.center]}>
-        <ActivityIndicator size="large" color="#10B981" />
+        <ActivityIndicator size="large" color={SparkTheme.accent} />
       </View>
     );
   }
@@ -118,121 +165,309 @@ export default function ScannerScreen() {
   if (!permission.granted) {
     return (
       <View style={[s.container, s.center, { padding: 24 }]}>
-        <View style={s.errorCard}>
-          <Ionicons name="camera-outline" size={48} color="#EF4444" style={{ marginBottom: 16 }} />
-          <Text style={s.errorTitle}>Camera Permission Required</Text>
-          <Text style={s.errorText}>
-            This application is for admins to scan user QR codes. Please grant camera access to proceed.
+        <CyberCard style={{ maxWidth: 360 }} innerStyle={{ alignItems: 'center', padding: 26 }}>
+          <Ionicons name="camera-outline" size={52} color={SparkTheme.rose} style={{ marginBottom: 16 }} />
+          <Text style={s.permTitle}>Camera Access Required</Text>
+          <Text style={s.permDesc}>
+            To scan attendee QR gate passes for the Illuminate &apos;26 workshop, please enable camera access.
           </Text>
-          <TouchableOpacity style={s.permissionBtn} onPress={requestPermission} activeOpacity={0.8}>
-            <Text style={s.permissionBtnText}>Enable Camera</Text>
+          <TouchableOpacity style={s.permBtn} onPress={requestPermission} activeOpacity={0.88}>
+            <LinearGradient
+              colors={SparkTheme.gradients.radiant}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={s.permBtnGradient}
+            >
+              <Text style={s.permBtnText}>Grant Camera Permission</Text>
+            </LinearGradient>
           </TouchableOpacity>
-        </View>
+        </CyberCard>
       </View>
     );
   }
 
   return (
     <View style={s.container}>
-      {/* Full-screen Camera View */}
+      {/* Camera Stream */}
       <CameraView
         style={StyleSheet.absoluteFill}
         barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
         onBarcodeScanned={result ? undefined : handleScan}
+        enableTorch={torchOn}
+        facing={facing}
       />
 
-      {/* Viewfinder Cutout Overlay */}
+      {/* Futuristic Vignette Cutout */}
       <View style={s.overlayContainer}>
-        {/* Top semi-transparent mask */}
         <View style={s.overlayTop} />
-        
+
         <View style={s.overlayMiddleRow}>
-          {/* Left semi-transparent mask */}
           <View style={s.overlayLeftRight} />
-          
-          {/* Viewfinder Area */}
+
+          {/* Viewfinder Target Area */}
           <View style={s.finder}>
-            {/* Corner accents */}
+            {/* Cyber Corner Accents */}
             <View style={[s.corner, s.tl]} />
             <View style={[s.corner, s.tr]} />
             <View style={[s.corner, s.bl]} />
             <View style={[s.corner, s.br]} />
-            
-            {/* Animated Laser Line */}
+
+            {/* Glowing Laser */}
             <Animated.View style={[s.laser, animatedLaserStyle]} />
           </View>
-          
-          {/* Right semi-transparent mask */}
+
           <View style={s.overlayLeftRight} />
         </View>
-        
-        {/* Bottom semi-transparent mask containing hints */}
+
         <View style={s.overlayBottom}>
-          <Text style={s.hintText}>Align attendee&apos;s QR code within the frame</Text>
+          <View style={s.hintPill}>
+            <Ionicons name="scan-outline" size={14} color="#e879f9" style={{ marginRight: 6 }} />
+            <Text style={s.hintText}>Point camera at Attendee Pass QR</Text>
+          </View>
         </View>
       </View>
 
-      {/* Floating Glassmorphic Top Bar */}
-      <BlurView tint="dark" intensity={70} style={s.topBar}>
-        <View style={s.adminProfile}>
-          <View style={s.avatar}>
+      {/* Floating Header */}
+      <BlurView
+        tint="dark"
+        intensity={80}
+        style={[
+          s.topBar,
+          {
+            paddingTop: Math.max(insets.top, 20) + 8,
+          },
+        ]}
+      >
+        <View style={s.headerLeft}>
+          <View style={s.avatarCircle}>
             <Text style={s.avatarText}>
-              {admin?.name ? admin.name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() : 'AD'}
+              {admin?.name
+                ? admin.name
+                    .split(' ')
+                    .map((n: string) => n[0])
+                    .join('')
+                    .slice(0, 2)
+                    .toUpperCase()
+                : 'AD'}
             </Text>
           </View>
           <View style={{ marginLeft: 10 }}>
-            <Text style={s.adminLabel}>Logged in as</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={s.badgePill}>
+                <Text style={s.badgePillText}>SPARK GATE ADMIN</Text>
+              </View>
+              <BackendConnectionBadge variant="compact" />
+            </View>
             <Text style={s.adminName}>{admin?.name || 'Admin'}</Text>
           </View>
         </View>
 
+        {/* Live Scanned Counter */}
         <View style={s.countBadge}>
           <Text style={s.countNum}>{todayCount}</Text>
-          <Text style={s.countLabel}>Scanned In</Text>
+          <Text style={s.countLabel}>CHECKED IN</Text>
         </View>
       </BlurView>
 
-      {/* Result feedback banner */}
+      {/* Quick Camera Action Toolbar (Right side floating) */}
+      <View style={[s.sideToolbar, { top: Math.max(insets.top, 20) + 72 }]}>
+        {/* Torch Toggle */}
+        <TouchableOpacity
+          style={[s.toolBtn, torchOn && s.toolBtnActive]}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setTorchOn(!torchOn);
+          }}
+          activeOpacity={0.8}
+        >
+          <Ionicons
+            name={torchOn ? 'flash' : 'flash-outline'}
+            size={20}
+            color={torchOn ? '#ffffff' : '#c4b5fd'}
+          />
+        </TouchableOpacity>
+
+        {/* Flip Camera */}
+        <TouchableOpacity
+          style={s.toolBtn}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setFacing(f => (f === 'back' ? 'front' : 'back'));
+          }}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="camera-reverse-outline" size={20} color="#c4b5fd" />
+        </TouchableOpacity>
+
+        {/* Manual Lookup Modal Button */}
+        <TouchableOpacity
+          style={s.toolBtn}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setManualModalVisible(true);
+          }}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="keypad-outline" size={20} color="#c4b5fd" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Rich Verification Result Card */}
       {result && (
-        <View style={[s.banner, result.ok ? s.bannerOk : s.bannerErr]}>
-          <View style={[s.bannerIconBg, result.ok ? s.bannerIconBgOk : s.bannerIconBgErr]}>
-            <Ionicons name={result.ok ? 'checkmark' : 'close'} size={20} color="#ffffff" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={s.bannerTitle}>{result.ok ? 'SUCCESS' : 'SCAN FAILED'}</Text>
-            <Text style={s.bannerMessage}>{result.message}</Text>
-          </View>
+        <View
+          style={[
+            s.resultContainer,
+            {
+              bottom: Math.max(insets.bottom, 16) + 84,
+            },
+          ]}
+        >
+          <CyberCard
+            offsetColor={result.ok ? '#059669' : '#dc2626'}
+            borderColor={result.ok ? '#34d399' : '#f43f5e'}
+            innerStyle={s.resultInner}
+          >
+            <View style={s.resultHeader}>
+              <View
+                style={[
+                  s.resultIconCircle,
+                  result.ok ? s.resultIconCircleOk : s.resultIconCircleErr,
+                ]}
+              >
+                <Ionicons
+                  name={result.ok ? 'checkmark' : 'alert'}
+                  size={24}
+                  color="#ffffff"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.resultTitle, result.ok ? s.resultTitleOk : s.resultTitleErr]}>
+                  {result.ok ? 'PASS VERIFIED' : 'SCAN ERROR'}
+                </Text>
+                <Text style={s.resultMessage}>{result.message}</Text>
+              </View>
+            </View>
+
+            {/* If attendee details provided, display meta badges */}
+            {result.attendee && (
+              <View style={s.attendeeCardDetails}>
+                {result.attendee.name ? (
+                  <Text style={s.attendeeNameText}>{result.attendee.name}</Text>
+                ) : null}
+                <View style={s.badgeRow}>
+                  {result.attendee.usn ? (
+                    <View style={s.usnBadge}>
+                      <Text style={s.usnBadgeText}>{result.attendee.usn}</Text>
+                    </View>
+                  ) : null}
+                  {result.attendee.attendance_code ? (
+                    <View style={s.codeBadge}>
+                      <Text style={s.codeBadgeText}>{result.attendee.attendance_code}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            )}
+          </CyberCard>
         </View>
       )}
 
-      {/* Floating Glassmorphic Bottom Navigation Bar */}
-      <BlurView tint="dark" intensity={75} style={s.navBar}>
+      {/* Floating Bottom Navigation Dock (Safe Area Supported) */}
+      <BlurView
+        tint="dark"
+        intensity={85}
+        style={[
+          s.dockNav,
+          {
+            bottom: Math.max(insets.bottom, 16) + 10,
+          },
+        ]}
+      >
         <TouchableOpacity
-          style={s.navBtn}
+          style={s.dockItem}
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             router.push('/attendance');
           }}
           activeOpacity={0.8}
         >
-          <Ionicons name="receipt-outline" size={20} color="#10B981" style={{ marginRight: 8 }} />
-          <Text style={s.navBtnText}>View Report</Text>
+          <LinearGradient
+            colors={['rgba(124, 58, 237, 0.3)', 'rgba(147, 51, 234, 0.1)']}
+            style={s.dockItemGradient}
+          >
+            <Ionicons name="list-outline" size={18} color="#e879f9" style={{ marginRight: 8 }} />
+            <Text style={s.dockItemText}>Attendance Logs</Text>
+          </LinearGradient>
         </TouchableOpacity>
 
-        <View style={s.divider} />
+        <View style={s.dockDivider} />
 
-        <TouchableOpacity 
-          style={s.logoutBtn} 
+        <TouchableOpacity
+          style={s.dockLogout}
           onPress={() => {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
             logout();
-          }} 
+          }}
           activeOpacity={0.8}
         >
-          <Ionicons name="log-out-outline" size={20} color="#EF4444" style={{ marginRight: 8 }} />
-          <Text style={s.logoutBtnText}>Sign Out</Text>
+          <Ionicons name="log-out-outline" size={18} color="#f87171" style={{ marginRight: 6 }} />
+          <Text style={s.dockLogoutText}>Exit</Text>
         </TouchableOpacity>
       </BlurView>
+
+      {/* Manual Check-in Modal */}
+      <Modal
+        visible={manualModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setManualModalVisible(false)}
+      >
+        <View style={s.modalBackdrop}>
+          <CyberCard style={s.modalCard} innerStyle={s.modalInner}>
+            <View style={s.modalHeader}>
+              <View style={s.modalTitleRow}>
+                <Ionicons name="search" size={20} color="#e879f9" style={{ marginRight: 8 }} />
+                <Text style={s.modalTitle}>Manual Attendee Verification</Text>
+              </View>
+              <TouchableOpacity onPress={() => setManualModalVisible(false)} style={s.modalCloseBtn}>
+                <Ionicons name="close" size={20} color="#c4b5fd" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={s.modalDesc}>
+              Enter attendee&apos;s USN, Attendance Code, or Email to check them in manually:
+            </Text>
+
+            <TextInput
+              style={s.modalInput}
+              placeholder="e.g. 2GI22CS001 or SPARK-ATT-..."
+              placeholderTextColor={SparkTheme.textMuted}
+              value={manualInput}
+              onChangeText={setManualInput}
+              autoCapitalize="characters"
+              autoCorrect={false}
+            />
+
+            <TouchableOpacity
+              style={s.modalSubmitBtn}
+              onPress={handleManualSubmit}
+              disabled={manualLoading}
+              activeOpacity={0.88}
+            >
+              <LinearGradient
+                colors={SparkTheme.gradients.radiant}
+                style={s.modalSubmitGradient}
+              >
+                {manualLoading ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={s.modalSubmitText}>Verify & Check In</Text>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+          </CyberCard>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -240,117 +475,46 @@ export default function ScannerScreen() {
 const s = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F172A',
+    backgroundColor: '#060010',
   },
   center: {
     alignItems: 'center',
     justifyContent: 'center',
   },
-  errorCard: {
-    backgroundColor: '#1E293B',
-    borderRadius: 20,
-    padding: 32,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#334155',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  errorTitle: {
-    color: '#F8FAFC',
-    fontSize: 20,
-    fontWeight: '700',
+  permTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: SparkTheme.text,
     marginBottom: 8,
-  },
-  errorText: {
-    color: '#94A3B8',
     textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 24,
   },
-  permissionBtn: {
-    backgroundColor: '#EF4444',
-    paddingVertical: 12,
-    paddingHorizontal: 28,
-    borderRadius: 12,
+  permDesc: {
+    fontSize: 13,
+    color: SparkTheme.textSecondary,
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 20,
   },
-  permissionBtnText: {
+  permBtn: {
+    width: '100%',
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  permBtnGradient: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  permBtnText: {
     color: '#ffffff',
-    fontWeight: '600',
-    fontSize: 15,
-  },
-  topBar: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingTop: Platform.OS === 'ios' ? 60 : 44,
-    paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  adminProfile: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#1E293B',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#10B981',
-  },
-  avatarText: {
-    color: '#10B981',
     fontWeight: '700',
     fontSize: 14,
-  },
-  adminLabel: {
-    color: 'rgba(255, 255, 255, 0.5)',
-    fontSize: 11,
-    textTransform: 'uppercase',
-  },
-  adminName: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  countBadge: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    borderRadius: 12,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
-  },
-  countNum: {
-    color: '#10B981',
-    fontSize: 20,
-    fontWeight: '800',
-  },
-  countLabel: {
-    color: '#10B981',
-    fontSize: 9,
-    fontWeight: '600',
-    textTransform: 'uppercase',
   },
   overlayContainer: {
     ...StyleSheet.absoluteFillObject,
   },
   overlayTop: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    backgroundColor: 'rgba(6, 0, 16, 0.76)',
   },
   overlayMiddleRow: {
     flexDirection: 'row',
@@ -358,7 +522,7 @@ const s = StyleSheet.create({
   },
   overlayLeftRight: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    backgroundColor: 'rgba(6, 0, 16, 0.76)',
   },
   finder: {
     width: FINDER_SIZE,
@@ -370,197 +534,370 @@ const s = StyleSheet.create({
     position: 'absolute',
     width: CORNER_SIZE,
     height: CORNER_SIZE,
-    borderColor: '#10B981',
+    borderColor: '#e879f9',
     borderWidth: 3.5,
+    shadowColor: '#e879f9',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+    elevation: 8,
   },
   tl: {
     top: 0,
     left: 0,
     borderRightWidth: 0,
     borderBottomWidth: 0,
-    borderTopLeftRadius: 10,
+    borderTopLeftRadius: 12,
   },
   tr: {
     top: 0,
     right: 0,
     borderLeftWidth: 0,
     borderBottomWidth: 0,
-    borderTopRightRadius: 10,
+    borderTopRightRadius: 12,
   },
   bl: {
     bottom: 0,
     left: 0,
     borderRightWidth: 0,
     borderTopWidth: 0,
-    borderBottomLeftRadius: 10,
+    borderBottomLeftRadius: 12,
   },
   br: {
     bottom: 0,
     right: 0,
     borderLeftWidth: 0,
     borderTopWidth: 0,
-    borderBottomRightRadius: 10,
+    borderBottomRightRadius: 12,
   },
   laser: {
     position: 'absolute',
     left: 8,
     right: 8,
-    height: 3,
-    backgroundColor: '#10B981',
-    shadowColor: '#10B981',
+    height: 3.5,
+    backgroundColor: '#e879f9',
+    shadowColor: '#e879f9',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  overlayBottom: {
-    flex: 1.2,
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
-    alignItems: 'center',
-    paddingTop: 20,
-  },
-  hintText: {
-    color: '#94A3B8',
-    fontSize: 14,
-    marginBottom: 30,
-    textAlign: 'center',
-  },
-  toggleContainer: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(30, 41, 59, 0.8)',
-    borderRadius: 14,
-    padding: 4,
-    borderWidth: 1,
-    borderColor: '#334155',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-  },
-  toggleBtn: {
-    flexDirection: 'row',
-    paddingVertical: 12,
-    paddingHorizontal: 28,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  toggleActiveIn: {
-    backgroundColor: '#10B981',
-    shadowColor: '#10B981',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-  },
-  toggleActiveOut: {
-    backgroundColor: '#F59E0B',
-    shadowColor: '#F59E0B',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-  },
-  toggleText: {
-    color: '#94A3B8',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  toggleTextActive: {
-    color: '#ffffff',
-  },
-  banner: {
-    position: 'absolute',
-    bottom: 120,
-    left: 20,
-    right: 20,
-    borderRadius: 16,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 8,
-    borderWidth: 1.5,
-  },
-  bannerOk: {
-    backgroundColor: '#064E3B', // Deep dark emerald green
-    borderColor: '#10B981',
-  },
-  bannerErr: {
-    backgroundColor: '#7F1D1D', // Deep dark crimson red
-    borderColor: '#EF4444',
-  },
-  bannerIconBg: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  bannerIconBgOk: {
-    backgroundColor: '#10B981',
-  },
-  bannerIconBgErr: {
-    backgroundColor: '#EF4444',
-  },
-  bannerTitle: {
-    color: '#ffffff',
-    fontWeight: '800',
-    fontSize: 12,
-    letterSpacing: 1.5,
-    marginBottom: 2,
-  },
-  bannerMessage: {
-    color: 'rgba(255, 255, 255, 0.9)',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  navBar: {
-    position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 44 : 24,
-    left: 24,
-    right: 24,
-    borderRadius: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.35,
-    shadowRadius: 15,
+    shadowOpacity: 1,
+    shadowRadius: 12,
     elevation: 10,
   },
-  navBtn: {
-    flex: 1.2,
+  overlayBottom: {
+    flex: 1.3,
+    backgroundColor: 'rgba(6, 0, 16, 0.76)',
+    alignItems: 'center',
+    paddingTop: 24,
+  },
+  hintPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(20, 8, 44, 0.85)',
+    paddingHorizontal: 16,
     paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1.2,
+    borderColor: 'rgba(168, 85, 247, 0.35)',
   },
-  navBtnText: {
-    color: '#F8FAFC',
+  hintText: {
+    color: SparkTheme.textSecondary,
+    fontSize: 12.5,
+    fontWeight: '600',
+    letterSpacing: 0.4,
+  },
+  topBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(139, 92, 246, 0.25)',
+    backgroundColor: 'rgba(6, 0, 16, 0.85)',
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  avatarCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#1b0c36',
+    borderWidth: 1.8,
+    borderColor: '#c084fc',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    color: '#e879f9',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  badgePill: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(124, 58, 237, 0.2)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginBottom: 2,
+  },
+  badgePillText: {
+    color: '#c084fc',
+    fontSize: 8.5,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  adminName: {
+    color: SparkTheme.text,
     fontSize: 14,
     fontWeight: '700',
   },
-  divider: {
-    width: 1.5,
-    height: 24,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  countBadge: {
+    backgroundColor: 'rgba(14, 5, 31, 0.85)',
+    borderRadius: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    borderWidth: 1.2,
+    borderColor: 'rgba(232, 121, 249, 0.4)',
   },
-  logoutBtn: {
-    flex: 0.8,
+  countNum: {
+    color: '#e879f9',
+    fontSize: 19,
+    fontWeight: '800',
+  },
+  countLabel: {
+    color: SparkTheme.textSecondary,
+    fontSize: 8.5,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+  },
+  sideToolbar: {
+    position: 'absolute',
+    right: 16,
+    gap: 12,
+  },
+  toolBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(14, 5, 31, 0.85)',
+    borderWidth: 1.2,
+    borderColor: 'rgba(139, 92, 246, 0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  toolBtnActive: {
+    backgroundColor: '#7c3aed',
+    borderColor: '#c084fc',
+  },
+  resultContainer: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    zIndex: 50,
+  },
+  resultInner: {
+    padding: 18,
+  },
+  resultHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  resultIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  resultIconCircleOk: {
+    backgroundColor: '#059669',
+  },
+  resultIconCircleErr: {
+    backgroundColor: '#dc2626',
+  },
+  resultTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    marginBottom: 2,
+  },
+  resultTitleOk: {
+    color: '#34d399',
+  },
+  resultTitleErr: {
+    color: '#f43f5e',
+  },
+  resultMessage: {
+    color: SparkTheme.text,
+    fontSize: 13.5,
+    fontWeight: '600',
+  },
+  attendeeCardDetails: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(139, 92, 246, 0.25)',
+  },
+  attendeeNameText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ede9fe',
+    marginBottom: 6,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  usnBadge: {
+    backgroundColor: 'rgba(124, 58, 237, 0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(168, 85, 247, 0.4)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  usnBadgeText: {
+    color: '#e879f9',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  codeBadge: {
+    backgroundColor: 'rgba(14, 5, 31, 0.8)',
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.3)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  codeBadgeText: {
+    color: SparkTheme.textSecondary,
+    fontSize: 10.5,
+    fontWeight: '600',
+  },
+  dockNav: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    borderRadius: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 6,
+    borderWidth: 1.2,
+    borderColor: 'rgba(139, 92, 246, 0.35)',
+    backgroundColor: 'rgba(14, 5, 31, 0.88)',
+    shadowColor: '#7c3aed',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  dockItem: {
+    flex: 1.3,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  dockItemGradient: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
   },
-  logoutBtnText: {
-    color: '#F8FAFC',
+  dockItemText: {
+    color: SparkTheme.text,
+    fontSize: 13.5,
+    fontWeight: '700',
+  },
+  dockDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: 'rgba(139, 92, 246, 0.35)',
+    marginHorizontal: 4,
+  },
+  dockLogout: {
+    flex: 0.7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+  },
+  dockLogoutText: {
+    color: '#f87171',
+    fontSize: 13.5,
+    fontWeight: '700',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.82)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    maxWidth: 420,
+  },
+  modalInner: {
+    padding: 22,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  modalTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: SparkTheme.text,
+  },
+  modalCloseBtn: {
+    padding: 4,
+  },
+  modalDesc: {
+    fontSize: 13,
+    color: SparkTheme.textSecondary,
+    marginBottom: 16,
+    lineHeight: 18,
+  },
+  modalInput: {
+    backgroundColor: SparkTheme.inputBg,
+    borderWidth: 1.4,
+    borderColor: SparkTheme.inputBorder,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    height: 50,
+    color: SparkTheme.text,
+    fontSize: 15,
+    marginBottom: 18,
+  },
+  modalSubmitBtn: {
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  modalSubmitGradient: {
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalSubmitText: {
+    color: '#ffffff',
     fontSize: 14,
     fontWeight: '700',
   },
