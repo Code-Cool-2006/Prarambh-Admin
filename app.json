@@ -46,7 +46,8 @@
           "cameraPermission": "Camera access is required to scan user QR codes.",
           "barcodeScannerEnabled": true
         }
-      ]
+      ],
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true,
